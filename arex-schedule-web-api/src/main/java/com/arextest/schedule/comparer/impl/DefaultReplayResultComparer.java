@@ -1,5 +1,6 @@
 package com.arextest.schedule.comparer.impl;
 
+import com.alibaba.fastjson2.JSONObject;
 import com.arextest.diff.model.CompareOptions;
 import com.arextest.diff.model.CompareResult;
 import com.arextest.diff.model.enumeration.DiffResultCode;
@@ -33,6 +34,11 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import com.arextest.web.model.contract.contracts.config.SystemConfigWithProperties;
+
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.extern.slf4j.Slf4j;
@@ -295,6 +301,81 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
     return resultNew;
   }
 
+  /**
+   * 从URL字符串中移除指定的参数及其值
+   *
+   * @param url            原始的URL字符串
+   * @param paramsToRemove 要移除的参数名
+   * @return 处理后的URL字符串
+   */
+  public String removeParams(String url, String... paramsToRemove) {
+    try {
+      String modifiedUrl = url;
+      for (String param : paramsToRemove) {
+        modifiedUrl = modifiedUrl.replaceAll("(&?)" + param + "=[^&]*", "");
+      }
+      // 处理可能出现的多余的&&情况
+      modifiedUrl = modifiedUrl.replaceAll("&&", "&");
+      // 处理可能出现的末尾&情况
+      modifiedUrl = modifiedUrl.endsWith("&") ? modifiedUrl.substring(0, modifiedUrl.length() - 1) : modifiedUrl;
+      // 处理可能出现的开头&情况
+      modifiedUrl = modifiedUrl.startsWith("&") ? modifiedUrl.substring(1) : modifiedUrl;
+      return modifiedUrl;
+    } catch (Exception e) {
+      return url;
+    }
+  }
+
+
+  /**
+   * 将queryString解析成json格式
+   *
+   * @param queryString
+   * @return
+   */
+  public String queryStringToJson(String queryString) {
+    try {
+      queryString = removeParams(queryString, "g7timestamp", "sign");
+      if (!queryString.contains("accessid")) {
+        return queryString;
+      }
+      JSONObject json = new JSONObject();
+      // 使用&分割字符串
+      String[] pairs = queryString.split("&");
+      for (String pair : pairs) {
+        if (!pair.contains("=")) {
+          // 处理不含等号的键，这里默认值为空字符串
+          json.put(pair, "");
+        } else {
+          // 将键值对分割，并存入JSONObject
+          String[] keyValue = pair.split("=", 2);
+          json.put(keyValue[0], keyValue[1]);
+        }
+      }
+      return json.toJSONString();
+    } catch (Exception e) {
+      return queryString;
+    }
+  }
+
+  private String filterCustomReq(String string) {
+    if (string == null) {
+      return null;
+    }
+    try {
+      String decodedStr = new String(Base64.getDecoder().decode(string), StandardCharsets.UTF_8);
+      if (decodedStr.startsWith("req=")) {
+        // 过滤掉req=
+        decodedStr = URLDecoder.decode(decodedStr.substring(4), "UTF-8");
+        return decodedStr;
+      }
+    } catch (Exception ignored) {
+      // Exception handling if required
+    }
+    return string;
+  }
+
+
   private CompareResult compareProcess(String category, String record, String result,
       ReplayComparisonConfig compareConfig, int compareMode) {
     CompareOptions options = configHandler.buildSkdOption(category, compareConfig);
@@ -302,6 +383,16 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       // to-do: 64base extract record and result
       String decodedRecord = EncodingUtils.tryBase64Decode(record);
       String decodedResult = EncodingUtils.tryBase64Decode(result);
+
+      // 如果是GET格式，则去掉其中的g7timestamp和sign
+      // extend&gpsnos=71032425&map&accessid=wxaaebgby9ndwf6dm&g7timestamp=1706600220689&sign=Si2Nd2Gmcc/vhTAKjJQ1AFp5QeU=
+      // 代码转换成JSON
+      decodedResult = queryStringToJson(decodedResult);
+      decodedRecord = queryStringToJson(decodedRecord);
+
+      decodedResult = filterCustomReq(decodedResult);
+      decodedRecord = filterCustomReq(decodedRecord);
+
       if (compareMode == CompareModeType.FULL.getValue()) {
         return COMPARE_INSTANCE.compare(decodedRecord, decodedResult, options);
       }
