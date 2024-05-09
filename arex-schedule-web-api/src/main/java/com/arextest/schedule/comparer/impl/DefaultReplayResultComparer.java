@@ -335,8 +335,8 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
    */
   public String queryStringToJson(String queryString) {
     try {
-      queryString = removeParams(queryString, "g7timestamp", "sign");
-      if (!queryString.contains("accessid")) {
+      queryString = removeParams(queryString, "g7timestamp", "sign", "accessid");
+      if (!queryString.contains("&")) {
         return queryString;
       }
       JSONObject json = new JSONObject();
