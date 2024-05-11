@@ -12,6 +12,8 @@ import com.arextest.schedule.sender.ReplaySenderParameters;
 import com.arextest.schedule.sender.SenderParameters;
 import com.arextest.schedule.service.MetricService;
 import com.arextest.schedule.utils.DecodeUtils;
+
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -140,6 +142,20 @@ public final class DefaultHttpReplaySender extends AbstractReplaySender {
     return result;
   }
 
+  private String contactUrl(String baseUrl, String operation, String message) {
+    try {
+      byte[] decodeMessage = (byte[]) DecodeUtils.decode(message);
+      String stringMessage = new String(decodeMessage, StandardCharsets.UTF_8);
+      if (operation.contains("?")) {
+        operation = operation + "&" + stringMessage;
+      }
+    } catch (Exception e) {
+      // ignore
+    }
+
+    return contactUrl(baseUrl, operation);
+  }
+
   private ReplaySendResult doInvoke(SenderParameters senderParameters) {
     String method = senderParameters.getMethod();
     HttpMethod httpMethod = HttpMethod.resolve(method);
@@ -162,6 +178,7 @@ public final class DefaultHttpReplaySender extends AbstractReplaySender {
       }
       httpEntity = new HttpEntity<>(decodeMessage, httpHeaders);
     } else {
+      fullUrl = contactUrl(senderParameters.getUrl(), senderParameters.getOperation(), requestMessage);
       httpEntity = new HttpEntity<>(httpHeaders);
     }
     final ResponseEntity<?> responseEntity;
