@@ -16,6 +16,10 @@ import com.arextest.schedule.sender.httprequest.HttpRequestBuilderFactory;
 import com.arextest.schedule.service.MetricService;
 import jakarta.annotation.Resource;
 import java.util.List;
+import com.arextest.schedule.utils.DecodeUtils;
+
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.Map;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.collections4.MapUtils;
@@ -122,6 +126,30 @@ public final class DefaultHttpReplaySender extends AbstractReplaySender {
     return doSend(replayActionItem, caseItem, headers);
   }
 
+  private String contactUrl(String baseUrl, String operation) {
+    String result = null;
+    if (StringUtils.endsWith(baseUrl, "/") || StringUtils.startsWith(operation, "/")) {
+      result = baseUrl + operation;
+    } else {
+      result = baseUrl + "/" + operation;
+    }
+    return result;
+  }
+
+  private String contactUrl(String baseUrl, String operation, String message) {
+    try {
+      byte[] decodeMessage = (byte[]) DecodeUtils.decode(message);
+      String stringMessage = new String(decodeMessage, StandardCharsets.UTF_8);
+      if (operation.contains("?")) {
+        operation = operation + "&" + stringMessage;
+      }
+    } catch (Exception e) {
+      // ignore
+    }
+
+    return contactUrl(baseUrl, operation);
+  }
+
   private ReplaySendResult doInvoke(SenderParameters senderParameters) {
     AbstractHttpRequestBuilder httpRequestBuilder = httpRequestBuilderFactory.getHttpRequestBuilder(
         senderParameters);
@@ -141,6 +169,8 @@ public final class DefaultHttpReplaySender extends AbstractReplaySender {
     }
 
     String fullUrl = httpSenderContent.getRequestUrl();
+    //TODO 这里需要再Review一下，回放的时间兼容GET方法带Body的问题
+    //fullUrl = contactUrl(senderParameters.getUrl(), senderParameters.getOperation(), senderParameters.getMessage());
     HttpMethod httpMethod = httpSenderContent.getHttpMethod();
     HttpEntity<?> httpEntity = httpSenderContent.getHttpEntity();
     Class<?> responseType = httpSenderContent.getResponseType();
