@@ -22,10 +22,8 @@ import com.arextest.schedule.progress.ProgressTracer;
 import com.arextest.schedule.sender.ReplaySender;
 import com.arextest.schedule.sender.ReplaySenderFactory;
 import com.arextest.schedule.service.MetricService;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+
+import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -84,7 +82,9 @@ public class ReplayNoiseIdentifyService implements ReplayNoiseIdentify {
       PlanExecutionContext<?> executionContext) {
 
     Map<ReplayActionItem, List<ReplayActionCaseItem>> actionsOfBatch =
-        allCasesOfContext.stream().collect(Collectors.groupingBy(ReplayActionCaseItem::getParent));
+            allCasesOfContext.stream()
+                    .filter(item -> Objects.nonNull(item.getParent())) // 过滤掉 parent 为 null 的情况
+                    .collect(Collectors.groupingBy(ReplayActionCaseItem::getParent));
 
     String contextName = executionContext.getContextName();
     List<MutablePair<ReplayActionItem, List<ReplayActionCaseItem>>> casesForNoise = new ArrayList<>();
