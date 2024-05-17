@@ -387,8 +387,10 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       // 如果是GET格式，则去掉其中的g7timestamp和sign
       // extend&gpsnos=71032425&map&accessid=wxaaebgby9ndwf6dm&g7timestamp=1706600220689&sign=Si2Nd2Gmcc/vhTAKjJQ1AFp5QeU=
       // 代码转换成JSON
-      decodedResult = queryStringToJson(decodedResult);
-      decodedRecord = queryStringToJson(decodedRecord);
+      if (decodedResult != null && !EncodingUtils.isJson(decodedResult)) {
+        decodedResult = queryStringToJson(decodedResult);
+        decodedRecord = queryStringToJson(decodedRecord);
+      }
 
       decodedResult = filterCustomReq(decodedResult);
       decodedRecord = filterCustomReq(decodedRecord);

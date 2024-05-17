@@ -27,7 +27,7 @@ public class EncodingUtils {
     }
   }
 
-  private static boolean isJson(String value) {
+  public static boolean isJson(String value) {
     if (value.startsWith("{") && value.endsWith("}")) {
       return true;
     } else {
