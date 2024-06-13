@@ -19,7 +19,7 @@ public final class CommonConstant {
   public static final long ONE_DAY_MILLIS = 60 * 60 * 24 * 1000L;
   public static final long ONE_HOUR_MILLIS = 60 * 60 * 1000L;
   public static final long THREE_SECOND_MILLIS = 3 * 1000L;
-  public static final int OPERATION_MAX_CASE_COUNT = 1000;
+  public static final int OPERATION_MAX_CASE_COUNT = 10;
 
   public static final int GROUP_SENT_WAIT_TIMEOUT_SECONDS = 500;
 
