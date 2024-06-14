@@ -72,7 +72,10 @@ public class DefaultDubboReplaySender extends AbstractReplaySender {
 
   DubboInvocation generateDubboInvocation(ReplayActionCaseItem caseItem,
       Map<String, String> headers) {
-
+    // fix 异步调用取不到结果，回放失败
+    if (headers != null && "true".equalsIgnoreCase(headers.get("async"))) {
+      headers.put("async", "false");
+    }
     ImmutablePair<String, String> interfaceNameAndMethod =
         getInterfaceNameAndMethod(caseItem.getParent().getOperationName());
     if (interfaceNameAndMethod == null) {
