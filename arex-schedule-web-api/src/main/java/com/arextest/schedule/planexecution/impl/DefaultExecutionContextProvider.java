@@ -123,6 +123,8 @@ public class DefaultExecutionContextProvider
               dependencyHolder.getContextIdentifier());
       if (!plan.getActionItemMap().containsKey(warmupCase.getPlanItemId())) {
         LOGGER.error("warmup failed! caseId:{}, actionId:{}", warmupCase.getId(), warmupCase.getPlanItemId());
+        // warnup failed but continue
+        return;
       }
       warmupCase.setCaseSendScene(CaseSendScene.EXTRA);
 
