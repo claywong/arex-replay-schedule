@@ -28,6 +28,10 @@ public abstract class AbstractHttpRequestBuilder {
             continue;
           }
         }
+        if (key.equalsIgnoreCase("content-length")) {
+          // 发送的时候不要发content-length
+          continue;
+        }
         httpHeaders.add(key, entry.getValue());
       }
     }
