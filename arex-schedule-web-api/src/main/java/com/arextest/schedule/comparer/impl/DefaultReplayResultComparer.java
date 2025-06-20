@@ -1,6 +1,7 @@
 package com.arextest.schedule.comparer.impl;
 
 import com.alibaba.fastjson2.JSONObject;
+import com.alibaba.fastjson2.JSONArray;
 import com.arextest.diff.model.CompareOptions;
 import com.arextest.diff.model.CompareResult;
 import com.arextest.diff.model.enumeration.DiffResultCode;
@@ -47,11 +48,27 @@ import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.util.StopWatch;
 
+import java.text.SimpleDateFormat;
+import java.text.ParseException;
+import java.util.regex.Pattern;
+import java.util.regex.Matcher;
+
 @Slf4j
 @Builder
 public class DefaultReplayResultComparer implements ReplayResultComparer {
 
   private static final long MAX_TIME = Long.MAX_VALUE;
+
+  // 时间格式的正则表达式模式
+  private static final Pattern TIME_PATTERN = Pattern.compile(
+      "\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}");
+
+  // 时间戳格式的正则表达式模式（10位秒级时间戳或13位毫秒级时间戳）
+  private static final Pattern TIMESTAMP_PATTERN = Pattern.compile(
+      "^1\\d{9,12}$");
+
+  // 默认时间精度容忍度（毫秒）- 可以通过配置获取
+  private static final long DEFAULT_TIME_TOLERANCE_MS = 4000;
 
   private final CompareConfigService compareConfigService;
   private final PrepareCompareSourceRemoteLoader sourceRemoteLoader;
@@ -62,7 +79,6 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
   private final CustomComparisonConfigurationHandler configHandler;
   private final CompareService compareService;
 
-
   public DefaultReplayResultComparer(CompareConfigService compareConfigService,
       PrepareCompareSourceRemoteLoader sourceRemoteLoader,
       ProgressTracer progressTracer,
@@ -70,8 +86,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       ReplayActionCaseItemRepository caseItemRepository,
       MetricService metricService,
       CustomComparisonConfigurationHandler configHandler,
-      CompareService compareService
-  ) {
+      CompareService compareService) {
     this.compareConfigService = compareConfigService;
     this.sourceRemoteLoader = sourceRemoteLoader;
     this.progressTracer = progressTracer;
@@ -91,8 +106,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       MDCTracer.addPlanId(planId);
       MDCTracer.addPlanItemId(caseItem.getPlanItemId());
 
-      List<CategoryComparisonHolder> waitCompareMap =
-          sourceRemoteLoader.buildWaitCompareList(caseItem, useReplayId);
+      List<CategoryComparisonHolder> waitCompareMap = sourceRemoteLoader.buildWaitCompareList(caseItem, useReplayId);
       if (CollectionUtils.isEmpty(waitCompareMap)) {
         caseItemRepository.updateCompareStatus(caseItem.getId(),
             CompareProcessStatusType.ERROR.getValue());
@@ -107,7 +121,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
 
       if (CollectionUtils.isEmpty(replayCompareResults)
           && MockCategoryType.Q_MESSAGE_CONSUMER.getName()
-          .equalsIgnoreCase(caseItem.getCaseType())) {
+              .equalsIgnoreCase(caseItem.getCaseType())) {
         caseItemRepository.updateCompareStatus(caseItem.getId(),
             CompareProcessStatusType.PASS.getValue());
         caseItem.setCompareStatus(CompareProcessStatusType.PASS.getValue());
@@ -119,8 +133,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
         if (replayCompareResult.getDiffResultCode() == DiffResultCode.COMPARED_WITH_DIFFERENCE) {
           compareStatus = CompareProcessStatusType.HAS_DIFF;
           break;
-        } else if (replayCompareResult.getDiffResultCode()
-            == DiffResultCode.COMPARED_INTERNAL_EXCEPTION) {
+        } else if (replayCompareResult.getDiffResultCode() == DiffResultCode.COMPARED_INTERNAL_EXCEPTION) {
           compareStatus = CompareProcessStatusType.ERROR;
           break;
         }
@@ -195,6 +208,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
 
   /**
    * record and replay data through compareKey.
+   * 
    * @param bindHolder
    * @param caseItem
    * @param operationConfig
@@ -227,9 +241,9 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       return compareResults;
     }
 
-    Map<String, List<CompareItem>> recordMap =
-        recordResults.stream().filter(data -> StringUtils.isNotEmpty(data.getCompareKey()))
-            .collect(Collectors.groupingBy(CompareItem::getCompareKey));
+    Map<String, List<CompareItem>> recordMap = recordResults.stream()
+        .filter(data -> StringUtils.isNotEmpty(data.getCompareKey()))
+        .collect(Collectors.groupingBy(CompareItem::getCompareKey));
 
     Set<String> usedRecordKeys = new HashSet<>();
     for (CompareItem resultCompareItem : replayResults) {
@@ -340,7 +354,6 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
     }
   }
 
-
   /**
    * 将queryString解析成json格式
    *
@@ -389,7 +402,6 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
     return string;
   }
 
-
   private CompareResult compareProcess(String category, String record, String result,
       ReplayComparisonConfig compareConfig, int compareMode) {
     CompareOptions options = configHandler.buildSkdOption(category, compareConfig);
@@ -409,6 +421,18 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       decodedResult = filterCustomReq(decodedResult);
       decodedRecord = filterCustomReq(decodedRecord);
 
+      // 新增：对JSON字符串中的时间字段进行标准化处理
+      if (decodedRecord != null && EncodingUtils.isJson(decodedRecord)) {
+        LOGGER.debug("Before normalization - record: {}", decodedRecord);
+        decodedRecord = normalizeTimeFieldsInJson(decodedRecord);
+        LOGGER.debug("After normalization - record: {}", decodedRecord);
+      }
+      if (decodedResult != null && EncodingUtils.isJson(decodedResult)) {
+        LOGGER.debug("Before normalization - result: {}", decodedResult);
+        decodedResult = normalizeTimeFieldsInJson(decodedResult);
+        LOGGER.debug("After normalization - result: {}", decodedResult);
+      }
+
       if (compareMode == CompareModeType.FULL.getValue()) {
         return compareService.compare(decodedRecord, decodedResult, options);
       }
@@ -418,6 +442,197 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       LOGGER.error("run compare sdk process error:{} ,source: {} ,target:{}", e.getMessage(),
           record, result);
       return CompareSDK.fromException(record, result, e.getMessage());
+    }
+  }
+
+  /**
+   * 对JSON字符串中的时间字段进行标准化处理
+   * 如果时间差异在容忍范围内，则统一为同一个时间值
+   *
+   * @param jsonStr JSON字符串
+   * @return 处理后的JSON字符串
+   */
+  private String normalizeTimeFieldsInJson(String jsonStr) {
+    try {
+      if (jsonStr.startsWith("{") && jsonStr.endsWith("}")) {
+        JSONObject jsonObject = JSONObject.parseObject(jsonStr);
+        normalizeTimeFieldsInJsonObject(jsonObject);
+        return jsonObject.toJSONString();
+      } else if (jsonStr.startsWith("[") && jsonStr.endsWith("]")) {
+        JSONArray jsonArray = JSONArray.parseArray(jsonStr);
+        normalizeTimeFieldsInJsonArray(jsonArray);
+        return jsonArray.toJSONString();
+      }
+    } catch (Exception e) {
+      LOGGER.debug("Failed to normalize time fields in JSON: {}, error: {}", jsonStr, e.getMessage());
+    }
+    return jsonStr;
+  }
+
+  /**
+   * 递归处理JSONObject中的时间字段
+   */
+  private void normalizeTimeFieldsInJsonObject(JSONObject jsonObject) {
+    if (jsonObject == null) {
+      return;
+    }
+
+    for (String key : jsonObject.keySet()) {
+      Object value = jsonObject.get(key);
+      if (value instanceof String) {
+        String strValue = (String) value;
+        if (isTimeFormat(strValue)) {
+          // 对时间字符串进行标准化处理
+          String normalizedTime = normalizeTimeString(strValue);
+          jsonObject.put(key, normalizedTime);
+        } else if (isTimestamp(strValue)) {
+          // 对时间戳进行标准化处理
+          String normalizedTime = normalizeTimestamp(strValue);
+          jsonObject.put(key, normalizedTime);
+        } else if (EncodingUtils.isJson(strValue)) {
+          // 处理嵌套的JSON字符串
+          String normalizedNestedJson = normalizeTimeFieldsInJson(strValue);
+          jsonObject.put(key, normalizedNestedJson);
+        }
+      } else if (value instanceof Number) {
+        // 处理数字类型的时间戳
+        Number numValue = (Number) value;
+        if (isTimestamp(numValue.toString())) {
+          String normalizedTime = normalizeTimestamp(numValue.toString());
+          jsonObject.put(key, normalizedTime);
+        }
+      } else if (value instanceof JSONObject) {
+        normalizeTimeFieldsInJsonObject((JSONObject) value);
+      } else if (value instanceof JSONArray) {
+        normalizeTimeFieldsInJsonArray((JSONArray) value);
+      }
+    }
+  }
+
+  /**
+   * 递归处理JSONArray中的时间字段
+   */
+  private void normalizeTimeFieldsInJsonArray(JSONArray jsonArray) {
+    if (jsonArray == null) {
+      return;
+    }
+
+    for (int i = 0; i < jsonArray.size(); i++) {
+      Object value = jsonArray.get(i);
+      if (value instanceof String) {
+        String strValue = (String) value;
+        if (isTimeFormat(strValue)) {
+          String normalizedTime = normalizeTimeString(strValue);
+          jsonArray.set(i, normalizedTime);
+        } else if (isTimestamp(strValue)) {
+          String normalizedTime = normalizeTimestamp(strValue);
+          jsonArray.set(i, normalizedTime);
+        } else if (EncodingUtils.isJson(strValue)) {
+          // 处理嵌套的JSON字符串
+          String normalizedNestedJson = normalizeTimeFieldsInJson(strValue);
+          jsonArray.set(i, normalizedNestedJson);
+        }
+      } else if (value instanceof Number) {
+        Number numValue = (Number) value;
+        if (isTimestamp(numValue.toString())) {
+          String normalizedTime = normalizeTimestamp(numValue.toString());
+          jsonArray.set(i, normalizedTime);
+        }
+      } else if (value instanceof JSONObject) {
+        normalizeTimeFieldsInJsonObject((JSONObject) value);
+      } else if (value instanceof JSONArray) {
+        normalizeTimeFieldsInJsonArray((JSONArray) value);
+      }
+    }
+  }
+
+  /**
+   * 判断字符串是否为时间格式
+   */
+  private boolean isTimeFormat(String str) {
+    if (str == null || str.isEmpty()) {
+      return false;
+    }
+    return TIME_PATTERN.matcher(str).matches();
+  }
+
+  /**
+   * 判断字符串是否为时间戳格式（10位秒级或13位毫秒级）
+   */
+  private boolean isTimestamp(String str) {
+    if (str == null || str.isEmpty()) {
+      return false;
+    }
+    return TIMESTAMP_PATTERN.matcher(str).matches();
+  }
+
+  /**
+   * 对时间字符串进行标准化处理
+   * 将秒级精度统一，忽略小的时间差异
+   */
+  private String normalizeTimeString(String timeStr) {
+    try {
+      SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+      long timeMillis = sdf.parse(timeStr).getTime();
+
+      // 获取系统配置的时间精度容忍度
+      long toleranceMs = getTimeToleranceMs();
+
+      // 将时间向下取整到容忍度的倍数
+      // 例如：如果容忍度是2000ms，时间戳14:02:52.123会被标准化为14:02:52.000
+      // 14:02:49.456也会被标准化为14:02:48.000，这样在容忍范围内的时间会被视为相同
+      long normalizedMillis = (timeMillis / toleranceMs) * toleranceMs;
+
+      String result = sdf.format(new java.util.Date(normalizedMillis));
+      return result;
+    } catch (ParseException e) {
+      LOGGER.debug("Failed to parse time string: {}, error: {}", timeStr, e.getMessage());
+      return timeStr;
+    }
+  }
+
+  /**
+   * 对时间戳进行标准化处理
+   * 支持10位秒级时间戳和13位毫秒级时间戳
+   */
+  private String normalizeTimestamp(String timestampStr) {
+    try {
+      long timestamp = Long.parseLong(timestampStr);
+
+      // 如果是10位时间戳（秒级），转换为毫秒级
+      if (timestampStr.length() == 10) {
+        timestamp = timestamp * 1000;
+      }
+
+      // 获取系统配置的时间精度容忍度
+      long toleranceMs = getTimeToleranceMs();
+
+      // 将时间向下取整到容忍度的倍数
+      long normalizedMillis = (timestamp / toleranceMs) * toleranceMs;
+
+      // 返回标准化后的时间戳字符串（保持原始格式）
+      if (timestampStr.length() == 10) {
+        return String.valueOf(normalizedMillis / 1000);
+      } else {
+        return String.valueOf(normalizedMillis);
+      }
+    } catch (NumberFormatException e) {
+      LOGGER.debug("Failed to parse timestamp: {}, error: {}", timestampStr, e.getMessage());
+      return timestampStr;
+    }
+  }
+
+  /**
+   * 获取时间容忍度配置
+   */
+  private long getTimeToleranceMs() {
+    try {
+      SystemConfigWithProperties config = compareConfigService.getComparisonSystemConfig();
+      long tolerance = config.getCompareIgnoreTimePrecisionMillis();
+      return tolerance;
+    } catch (Exception e) {
+      LOGGER.info("Failed to get time tolerance from config, using default: {} ms", DEFAULT_TIME_TOLERANCE_MS);
+      return DEFAULT_TIME_TOLERANCE_MS;
     }
   }
 
