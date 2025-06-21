@@ -61,6 +61,8 @@ public final class PlanConsumeService {
   private PlanExecutionMonitor planExecutionMonitorImpl;
   @Resource
   private CompareConfigService compareConfigService;
+  @Resource
+  private ExclusionConfigService exclusionConfigService;
 
   @Value("${arex.replay.threshold.errorBreakRatio:0.1}")
   private double errorBreakRatio;
@@ -285,6 +287,7 @@ public final class PlanConsumeService {
 
     private void initReplayPlan() {
       compareConfigService.preload(replayPlan);
+      exclusionConfigService.preloadExclusionConfig(replayPlan);
 
       // limiter shared for entire plan, max qps = maxQps per instance * min instance count
       final SendSemaphoreLimiter qpsLimiter = new SendSemaphoreLimiter(

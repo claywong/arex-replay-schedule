@@ -51,7 +51,7 @@ public final class CompareConfigService {
   private static final RetryTemplate RETRY_TEMPLATE = RetryTemplate.builder().maxAttempts(3)
       .fixedBackoff(200L)
       .build();
-  private static final long DEFAULT_COMPARE_IGNORE_TIME_PRECISION_MILLIS = 5000;
+  private static final long DEFAULT_COMPARE_IGNORE_TIME_PRECISION_MILLIS = 8000;
   private static final boolean DEFAULT_COMPARE_NAME_TO_LOWER = true;
   private static final boolean DEFAULT_COMPARE_NULL_EQUALS_EMPTY = true;
   private static final boolean DEFAULT_COMPARE_ONLY_COMPARE_COINCIDENT_COLUMN = true;

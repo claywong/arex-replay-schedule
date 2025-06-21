@@ -28,6 +28,9 @@ import com.arextest.schedule.model.config.ComparisonInterfaceConfig;
 import com.arextest.schedule.model.config.ReplayComparisonConfig;
 import com.arextest.schedule.progress.ProgressTracer;
 import com.arextest.schedule.service.MetricService;
+import com.arextest.schedule.service.ExclusionConfigService;
+import com.arextest.schedule.model.exclusion.ExclusionConfigItem;
+import com.arextest.schedule.utils.JsonExclusionUtils;
 import com.arextest.web.model.contract.contracts.compare.CategoryDetail;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -78,6 +81,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
   private final MetricService metricService;
   private final CustomComparisonConfigurationHandler configHandler;
   private final CompareService compareService;
+  private final ExclusionConfigService exclusionConfigService;
 
   public DefaultReplayResultComparer(CompareConfigService compareConfigService,
       PrepareCompareSourceRemoteLoader sourceRemoteLoader,
@@ -86,7 +90,8 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       ReplayActionCaseItemRepository caseItemRepository,
       MetricService metricService,
       CustomComparisonConfigurationHandler configHandler,
-      CompareService compareService) {
+      CompareService compareService,
+      ExclusionConfigService exclusionConfigService) {
     this.compareConfigService = compareConfigService;
     this.sourceRemoteLoader = sourceRemoteLoader;
     this.progressTracer = progressTracer;
@@ -95,6 +100,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
     this.metricService = metricService;
     this.configHandler = configHandler;
     this.compareService = compareService;
+    this.exclusionConfigService = exclusionConfigService;
   }
 
   @Override
@@ -314,7 +320,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
     StopWatch stopWatch = new StopWatch();
     stopWatch.start(LogType.COMPARE_SDK.getValue());
     comparedResult = compareProcess(category, record, replay, compareConfig,
-        caseItem.getCompareMode().getValue());
+        caseItem.getCompareMode().getValue(), caseItem.getParent().getAppId());
     stopWatch.stop();
 
     // new call & call missing don't record time
@@ -403,7 +409,7 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
   }
 
   private CompareResult compareProcess(String category, String record, String result,
-      ReplayComparisonConfig compareConfig, int compareMode) {
+      ReplayComparisonConfig compareConfig, int compareMode, String appId) {
     CompareOptions options = configHandler.buildSkdOption(category, compareConfig);
     try {
       // to-do: 64base extract record and result
@@ -423,14 +429,33 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
 
       // 新增：对JSON字符串中的时间字段进行标准化处理
       if (decodedRecord != null && EncodingUtils.isJson(decodedRecord)) {
-        LOGGER.debug("Before normalization - record: {}", decodedRecord);
+//        LOGGER.debug("Before normalization - record: {}", decodedRecord);
         decodedRecord = normalizeTimeFieldsInJson(decodedRecord);
-        LOGGER.debug("After normalization - record: {}", decodedRecord);
+//        LOGGER.debug("After normalization - record: {}", decodedRecord);
       }
       if (decodedResult != null && EncodingUtils.isJson(decodedResult)) {
-        LOGGER.debug("Before normalization - result: {}", decodedResult);
+//        LOGGER.debug("Before normalization - result: {}", decodedResult);
         decodedResult = normalizeTimeFieldsInJson(decodedResult);
-        LOGGER.debug("After normalization - result: {}", decodedResult);
+//        LOGGER.debug("After normalization - result: {}", decodedResult);
+      }
+
+      // 新增：应用排除配置，移除需要忽略的字段
+      if (appId != null && (EncodingUtils.isJson(decodedRecord) || EncodingUtils.isJson(decodedResult))) {
+        List<ExclusionConfigItem> exclusionConfigs = exclusionConfigService.queryExclusionConfig(appId);
+        if (!exclusionConfigs.isEmpty()) {
+          // 应用排除配置到 record
+          if (decodedRecord != null && EncodingUtils.isJson(decodedRecord) && decodedRecord.contains("unload_receipt_imgs") ) {
+            LOGGER.debug("应用JSON字段排除前 - record: {}", decodedRecord);
+            decodedRecord = JsonExclusionUtils.applyExclusions(decodedRecord, exclusionConfigs);
+            LOGGER.debug("应用JSON字段排除后 - record: {}", decodedRecord);
+          }
+          // 应用排除配置到 result
+          if (decodedResult != null && EncodingUtils.isJson(decodedResult) && decodedResult.contains("unload_receipt_imgs") ) {
+            LOGGER.debug("应用JSON字段排除前 - result: {}", decodedResult);
+            decodedResult = JsonExclusionUtils.applyExclusions(decodedResult, exclusionConfigs);
+            LOGGER.debug("应用JSON字段排除后 - result: {}", decodedResult);
+          }
+        }
       }
 
       if (compareMode == CompareModeType.FULL.getValue()) {
@@ -489,10 +514,21 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
           // 对时间戳进行标准化处理
           String normalizedTime = normalizeTimestamp(strValue);
           jsonObject.put(key, normalizedTime);
-        } else if (EncodingUtils.isJson(strValue)) {
-          // 处理嵌套的JSON字符串
-          String normalizedNestedJson = normalizeTimeFieldsInJson(strValue);
-          jsonObject.put(key, normalizedNestedJson);
+        } else if (isValidJsonString(strValue)) {
+          // 处理嵌套的JSON字符串 - 采用逐级解析和替换的方法
+          try {
+            Object parsedObj = com.alibaba.fastjson2.JSON.parse(strValue);
+            if (parsedObj instanceof JSONObject) {
+              normalizeTimeFieldsInJsonObject((JSONObject) parsedObj);
+            } else if (parsedObj instanceof JSONArray) {
+              normalizeTimeFieldsInJsonArray((JSONArray) parsedObj);
+            }
+            // 将修改后的对象重新序列化并替换
+            String modifiedStr = com.alibaba.fastjson2.JSON.toJSONString(parsedObj);
+            jsonObject.put(key, modifiedStr);
+          } catch (Exception e) {
+            LOGGER.debug("Failed to parse nested JSON string: {}, error: {}", strValue, e.getMessage());
+          }
         }
       } else if (value instanceof Number) {
         // 处理数字类型的时间戳
@@ -527,10 +563,21 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
         } else if (isTimestamp(strValue)) {
           String normalizedTime = normalizeTimestamp(strValue);
           jsonArray.set(i, normalizedTime);
-        } else if (EncodingUtils.isJson(strValue)) {
-          // 处理嵌套的JSON字符串
-          String normalizedNestedJson = normalizeTimeFieldsInJson(strValue);
-          jsonArray.set(i, normalizedNestedJson);
+        } else if (isValidJsonString(strValue)) {
+          // 处理嵌套的JSON字符串 - 采用逐级解析和替换的方法
+          try {
+            Object parsedObj = com.alibaba.fastjson2.JSON.parse(strValue);
+            if (parsedObj instanceof JSONObject) {
+              normalizeTimeFieldsInJsonObject((JSONObject) parsedObj);
+            } else if (parsedObj instanceof JSONArray) {
+              normalizeTimeFieldsInJsonArray((JSONArray) parsedObj);
+            }
+            // 将修改后的对象重新序列化并替换
+            String modifiedStr = com.alibaba.fastjson2.JSON.toJSONString(parsedObj);
+            jsonArray.set(i, modifiedStr);
+          } catch (Exception e) {
+            LOGGER.debug("Failed to parse nested JSON string: {}, error: {}", strValue, e.getMessage());
+          }
         }
       } else if (value instanceof Number) {
         Number numValue = (Number) value;
@@ -634,6 +681,52 @@ public class DefaultReplayResultComparer implements ReplayResultComparer {
       LOGGER.info("Failed to get time tolerance from config, using default: {} ms", DEFAULT_TIME_TOLERANCE_MS);
       return DEFAULT_TIME_TOLERANCE_MS;
     }
+  }
+
+  /**
+   * 检查字符串是否为有效的JSON格式
+   * 
+   * @param str 待检查的字符串
+   * @return true如果是有效JSON，false否则
+   */
+  private boolean isValidJsonString(String str) {
+    if (str == null || str.trim().isEmpty()) {
+      return false;
+    }
+    
+    str = str.trim();
+    
+    // 检查是否以JSON对象或数组的格式开始和结束（支持转义字符）
+    if ((str.startsWith("{") && str.endsWith("}")) || 
+        (str.startsWith("[") && str.endsWith("]"))) {
+      try {
+        // 尝试直接解析
+        com.alibaba.fastjson2.JSON.parse(str);
+        return true;
+      } catch (Exception e) {
+        // 如果直接解析失败，可能包含转义字符
+        // 尝试将字符串作为JSON字符串值解析来处理转义
+        try {
+          // 构造一个包含该字符串的JSON对象，然后提取字符串值
+          String jsonWrapper = "{\"value\":\"" + str.replace("\"", "\\\"") + "\"}";
+          com.alibaba.fastjson2.JSONObject wrapper = com.alibaba.fastjson2.JSON.parseObject(jsonWrapper);
+          String unescaped = wrapper.getString("value");
+          com.alibaba.fastjson2.JSON.parse(unescaped);
+          return true;
+        } catch (Exception e2) {
+          // 最后尝试：直接替换常见的转义字符
+          try {
+            String processed = str.replace("\\\"", "\"").replace("\\\\", "\\");
+            com.alibaba.fastjson2.JSON.parse(processed);
+            return true;
+          } catch (Exception e3) {
+            return false;
+          }
+        }
+      }
+    }
+    
+    return false;
   }
 
   private void mergeResult(String operation, String category, ReplayCompareResult diffResult,

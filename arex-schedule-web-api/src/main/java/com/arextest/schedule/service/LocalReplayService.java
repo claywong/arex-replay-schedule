@@ -104,6 +104,8 @@ public class LocalReplayService {
   @Resource
   private CompareConfigService compareConfigService;
   @Resource
+  private ExclusionConfigService exclusionConfigService;
+  @Resource
   private ExecutorService postSendExecutorService;
   @Resource
   private PlanExecutionMonitor planExecutionMonitorImpl;
@@ -199,6 +201,7 @@ public class LocalReplayService {
     progressEvent.onUpdateFailedCases(replayPlan, failedCaseList);
     planConsumePrepareService.updateFailedActionAndCase(replayPlan, failedCaseList);
     compareConfigService.preload(replayPlan);
+    exclusionConfigService.preloadExclusionConfig(replayPlan);
     cacheReplayPlan(replayPlan);
     if (CollectionUtils.isEmpty(replayPlan.getReplayActionItemList())) {
       throw new RuntimeException("no replayActionItem!");
@@ -480,6 +483,7 @@ public class LocalReplayService {
 
     progressTracer.initTotal(replayPlan);
     compareConfigService.preload(replayPlan);
+    exclusionConfigService.preloadExclusionConfig(replayPlan);
     return Pair.of(replayPlan, null);
   }
 
